@@ -2,18 +2,15 @@ from flask import Flask, request, jsonify
 import numpy as np
 import os
 from PIL import Image
-import tflite_runtime.interpreter as tflite
+from tensorflow.keras.models import load_model
+from tensorflow.keras.preprocessing import image
 
 app = Flask(__name__)
 
-# Load TFLite model
-interpreter = tflite.Interpreter(model_path="model.tflite")
-interpreter.allocate_tensors()
+# Load TensorFlow model
+model = load_model("plant-disease-model.keras")
 
-input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
-
-# FULL class names
+# Class names
 class_names = [
 'Apple___Apple_scab',
 'Apple___Black_rot',
@@ -70,19 +67,17 @@ def predict():
         if file.filename == '':
             return jsonify({"error": "Empty file"}), 400
 
+        # Save temp image
+        filepath = "temp.jpg"
+        file.save(filepath)
+
         # Load image
-        image = Image.open(file).convert("RGB")
-        image = image.resize((224, 224))
+        img = image.load_img(filepath, target_size=(224, 224))
+        img_array = image.img_to_array(img) / 255.0
+        img_array = np.expand_dims(img_array, axis=0)
 
-        # Convert to array
-        img_array = np.array(image) / 255.0
-        img_array = np.expand_dims(img_array, axis=0).astype(np.float32)
-
-        # Run model
-        interpreter.set_tensor(input_details[0]['index'], img_array)
-        interpreter.invoke()
-
-        prediction = interpreter.get_tensor(output_details[0]['index'])
+        # Predict
+        prediction = model.predict(img_array)
 
         class_index = int(np.argmax(prediction))
         confidence = float(np.max(prediction) * 100)
@@ -94,6 +89,10 @@ def predict():
         else:
             plant = label
             disease = "Unknown"
+
+        # Delete temp file
+        if os.path.exists(filepath):
+            os.remove(filepath)
 
         return jsonify({
             "plant": plant,
