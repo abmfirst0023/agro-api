@@ -1,6 +1,6 @@
 flask
-tensorflow==2.12.0
 numpy
 pillow
+tflite-runtime
 gunicorn
-scikit-learn
+
