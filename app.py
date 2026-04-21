@@ -1,15 +1,19 @@
 from flask import Flask, request, jsonify
 import numpy as np
-from tensorflow.keras.models import load_model
-from tensorflow.keras.preprocessing import image
 import os
+from PIL import Image
+import tflite_runtime.interpreter as tflite
 
 app = Flask(__name__)
 
-# Load model ONCE (important)
-model = load_model("plant_disease_model.keras")
+# Load TFLite model
+interpreter = tflite.Interpreter(model_path="model.tflite")
+interpreter.allocate_tensors()
 
-# FULL class names (use your complete list)
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
+
+# FULL class names
 class_names = [
 'Apple___Apple_scab',
 'Apple___Black_rot',
@@ -58,7 +62,6 @@ def home():
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
-        # Check file
         if 'image' not in request.files:
             return jsonify({"error": "No image uploaded"}), 400
 
@@ -67,32 +70,30 @@ def predict():
         if file.filename == '':
             return jsonify({"error": "Empty file"}), 400
 
-        # Save temporary file
-        filepath = "temp.jpg"
-        file.save(filepath)
+        # Load image
+        image = Image.open(file).convert("RGB")
+        image = image.resize((224, 224))
 
-        # Preprocess image
-        img = image.load_img(filepath, target_size=(224, 224))
-        img_array = image.img_to_array(img) / 255.0
-        img_array = np.expand_dims(img_array, axis=0)
+        # Convert to array
+        img_array = np.array(image) / 255.0
+        img_array = np.expand_dims(img_array, axis=0).astype(np.float32)
 
-        # Predict
-        prediction = model.predict(img_array)
+        # Run model
+        interpreter.set_tensor(input_details[0]['index'], img_array)
+        interpreter.invoke()
+
+        prediction = interpreter.get_tensor(output_details[0]['index'])
+
         class_index = int(np.argmax(prediction))
         confidence = float(np.max(prediction) * 100)
 
         label = class_names[class_index]
 
-        # Split plant & disease
         if "___" in label:
             plant, disease = label.split("___")
         else:
             plant = label
             disease = "Unknown"
-
-        # Clean up file
-        if os.path.exists(filepath):
-            os.remove(filepath)
 
         return jsonify({
             "plant": plant,
@@ -101,11 +102,8 @@ def predict():
         })
 
     except Exception as e:
-        return jsonify({
-            "error": str(e)
-        }), 500
+        return jsonify({"error": str(e)}), 500
 
 
-# IMPORTANT FOR RENDER
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
